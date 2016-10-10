@@ -9,18 +9,18 @@ static NSString * const kNotificationCategory = @"LOCAL_NOTIFICATION_CATEGORY";
 static NSString * const kNotificationIdentifier = @"LOCAL_NOTIFICATION_IDENTIFIER";
 
 @interface AppDelegate ()<NSURLSessionDelegate, NSURLSessionDataDelegate,NSURLConnectionDataDelegate,NSURLConnectionDelegate,NSURLSessionTaskDelegate>
-
+{
+    NSMutableDictionary *_completionHandlers;
+    NSMutableDictionary *_backgroundSessions;
+}
 @end
 
 @implementation AppDelegate
 
-- (instancetype)sharedDelegate
-{
-    return nil;
-}
-
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 
+    _completionHandlers = [NSMutableDictionary dictionary];
+    _backgroundSessions = [NSMutableDictionary dictionary];
     [self registerNotificationTypes];
 
     [self handleNotificationFromLaunchOptions:launchOptions];
@@ -89,7 +89,9 @@ static NSString * const kNotificationIdentifier = @"LOCAL_NOTIFICATION_IDENTIFIE
 
 - (void)application:(UIApplication *)application handleEventsForBackgroundURLSession:(nonnull NSString *)identifier completionHandler:(nonnull void (^)())completionHandler
 {
-    NSLog(@"handleEventsForBackgroundURLSession");
+    NSLog(@"handleEventsForBackgroundURLSession %@", identifier);
+    [_completionHandlers setObject:completionHandler
+                            forKey:identifier];
 }
 
 #pragma mark - network handling
@@ -227,8 +229,32 @@ static NSString * const kNotificationIdentifier = @"LOCAL_NOTIFICATION_IDENTIFIE
     NSLog(@"Making request: %@", request);
 
     /* Start a new Task */
-    NSURLSessionDataTask *task = [session dataTaskWithRequest:request];
+    
+    [_backgroundSessions setObject:session forKey:identifier];
+    
+    NSURLSessionDownloadTask *task = [session downloadTaskWithRequest:request];
+    
     [task resume];
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(nonnull NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(nonnull NSURL *)location
+{
+    NSLog(@"downloadTask didFinishDownloadingToURL %@", location.absoluteString);
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(nonnull NSURLSessionDownloadTask *)downloadTask didResumeAtOffset:(int64_t)fileOffset expectedTotalBytes:(int64_t)expectedTotalBytes
+{
+    NSLog(@"downloadTask didResumeAtOffset");
+}
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(nonnull NSURLSessionDownloadTask *)downloadTask didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite
+{
+    NSLog(@"downloadTask didWriteData");
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
+{
+    NSLog(@"task didCompleteWithError %@", error.localizedDescription);
 }
 
 -(void)URLSession:(NSURLSession *)session didBecomeInvalidWithError:(NSError *)error{
@@ -279,6 +305,13 @@ didReceiveResponse:(NSURLResponse *)response
 - (void)URLSessionDidFinishEventsForBackgroundURLSession:(NSURLSession *)session
 {
     NSLog(@"URLSessionDidFinishEventsForBackgroundURLSession");
+    
+    void (^ completion)() = [_completionHandlers objectForKey:session.configuration.identifier];
+    if (completion) {
+        completion();
+        [_completionHandlers removeObjectForKey:session.configuration.identifier];
+        NSLog(@"completion handler called");
+    }
 }
 
 #pragma mark - notification creation
